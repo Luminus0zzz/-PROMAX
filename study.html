@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>N5 手寫大師</title>
+    <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.0.0/dist/signature_pad.umd.min.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #dfe6e9; margin: 0; display: flex; justify-content: center; }
+        .app { width: 100%; max-width: 400px; background: white; min-height: 100vh; padding: 20px; box-sizing: border-box; }
+        .page { display: none; flex-direction: column; gap: 15px; }
+        .page.active { display: flex; }
+        h1 { color: #6c5ce7; text-align: center; }
+        button { padding: 12px; border-radius: 8px; border: none; background: #6c5ce7; color: white; font-weight: bold; cursor: pointer; width: 100%; }
+        .canvas-wrapper { width: 100%; height: 250px; border: 2px solid #6c5ce7; border-radius: 10px; }
+        canvas { width: 100%; height: 100%; display: block; }
+        .list-item { padding: 8px; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+
+<div class="app">
+    <div id="page-home" class="page active">
+        <h1>PROMAX進化版</h1>
+        <button onclick="goTo('page-quiz')">🎯 開始測驗</button>
+        <button onclick="goTo('page-manage')" style="background:#0984e3;">📚 管理單字</button>
+        <button onclick="goTo('page-review')" style="background:#d63031;">🚩 錯字回顧</button>
+    </div>
+
+    <div id="page-quiz" class="page">
+        <button onclick="goTo('page-home')">⬅️ 返回</button>
+        <div id="quiz-display" style="font-size: 2.5rem; text-align: center; color: #6c5ce7; font-weight: bold;">讀取中...</div>
+        <div class="canvas-wrapper"><canvas id="hwCanvas"></canvas></div>
+        <button onclick="sigPad.clear()">清除畫布</button>
+        <button id="check-btn" onclick="checkAnswer()">提交辨識</button>
+        <button id="next-btn" style="background:#00b894; display:none;" onclick="nextQuestion()">下一題</button>
+        <div id="result" style="text-align: center; font-weight: bold; min-height: 1.5em; margin-top:10px;"></div>
+    </div>
+
+    <div id="page-manage" class="page">
+        <button onclick="goTo('page-home')">⬅️ 返回</button>
+        <input id="new-ch" placeholder="中文" style="padding:10px; width:90%;">
+        <input id="new-jp" placeholder="日文 (用逗號隔開)" style="padding:10px; width:90%;">
+        <button onclick="addWord()" style="background:#00b894;">新增單字</button>
+        <div id="word-list" style="max-height: 300px; overflow-y: auto; margin-top:10px;"></div>
+    </div>
+
+    <div id="page-review" class="page">
+        <button onclick="goTo('page-home')">⬅️ 返回</button>
+        <div id="review-list"></div>
+        <button onclick="clearReview()" style="background:#d63031;">清空所有錯字</button>
+    </div>
+</div>
+
+<script>
+    // 這裡換成你的 Raw 連結
+    const REMOTE_URL = 'https://gist.githubusercontent.com/Luminus0zzz/f52cdc0ce375264f0c0093bc794373fe/raw/3edc164e57607c89c7706904005f916b2209862e/words.json';
+
+    let wordBank = [];
+    let wrongWords = JSON.parse(localStorage.getItem('jp_wrong')) || [];
+    let remainingWords = [];
+    let currentWord = {};
+    let sigPad;
+    const canvas = document.getElementById('hwCanvas');
+
+    async function initApp() {
+        try {
+            const res = await fetch(`${REMOTE_URL}?t=${Date.now()}`);
+            const data = await res.json();
+            const custom = JSON.parse(localStorage.getItem('jp_custom')) || [];
+            wordBank = [...data, ...custom];
+        } catch(e) {
+            wordBank = JSON.parse(localStorage.getItem('jp_custom')) || [{ch:"貓", jp:["猫","ねこ"]}];
+        }
+    }
+    initApp();
+
+    function goTo(pageId) {
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        document.getElementById(pageId).classList.add('active');
+        if(pageId === 'page-quiz') { remainingWords = [...wordBank]; setTimeout(initPad, 50); nextQuestion(); }
+        if(pageId === 'page-manage') renderList();
+        if(pageId === 'page-review') renderReview();
+    }
+
+    function initPad() {
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width; canvas.height = rect.height;
+        sigPad = new SignaturePad(canvas, { minWidth: 2, maxWidth: 4 });
+    }
+
+    function nextQuestion() {
+        if (remainingWords.length === 0) { alert("此輪結束！"); remainingWords = [...wordBank]; }
+        currentWord = remainingWords.splice(Math.floor(Math.random() * remainingWords.length), 1)[0];
+        document.getElementById('quiz-display').innerText = currentWord.ch;
+        document.getElementById('result').innerText = "";
+        document.getElementById('next-btn').style.display = "none";
+        document.getElementById('check-btn').style.display = "block";
+        if(sigPad) sigPad.clear();
+    }
+
+   async function checkAnswer() {
+    if (sigPad.isEmpty()) return;
+
+    // 取得筆跡數據並轉換格式
+    const data = sigPad.toData();
+    // Google API 需要的格式：[ [x座標陣列, y座標陣列, []] ]
+    const inkData = data.map(stroke => {
+        const xCoords = stroke.points.map(p => Math.round(p.x));
+        const yCoords = stroke.points.map(p => Math.round(p.y));
+        return [xCoords, yCoords, []];
+    });
+
+    const bodyData = {
+        "requests": [{
+            "writing_guide": {
+                "writing_area_width": canvas.width,
+                "writing_area_height": canvas.height
+            },
+            "ink": inkData,
+            "language": "ja"
+        }]
+    };
+
+    try {
+        const res = await fetch('https://www.google.com.tw/inputtools/request?ime=handwriting&app=mobilesearch&cs=1&oe=UTF-8', {
+            method: 'POST',
+            body: JSON.stringify(bodyData),
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const result = await res.json();
+        
+        // 檢查 API 是否成功回傳
+        if (result[0] !== 'SUCCESS') {
+            document.getElementById('result').innerText = "辨識伺服器暫時無回應，請再試一次";
+            return;
+        }
+
+        const candidates = result[1][0][1];
+        
+        // 比對邏輯
+        const isCorrect = candidates.some(c => currentWord.jp.includes(c.trim()));
+        
+        if (isCorrect) {
+            document.getElementById('result').style.color = "green";
+            document.getElementById('result').innerText = "✅ 正確！";
+            document.getElementById('next-btn').style.display = "block";
+            document.getElementById('check-btn').style.display = "none";
+        } else {
+            document.getElementById('result').style.color = "red";
+            document.getElementById('result').innerHTML = `❌ 錯誤！辨識到: ${candidates[0]} <br> 正確: ${currentWord.jp.join(' 或 ')}`;
+            
+            if (!wrongWords.some(w => w.ch === currentWord.ch)) {
+                wrongWords.push(currentWord);
+                localStorage.setItem('jp_wrong', JSON.stringify(wrongWords));
+            }
+        }
+    } catch (error) {
+        console.error("辨識錯誤:", error);
+        document.getElementById('result').innerText = "網路連線發生問題，請檢查網路。";
+    }
+}
+
+    function addWord() {
+        const ch = document.getElementById('new-ch').value;
+        const jp = document.getElementById('new-jp').value.split(',').map(s => s.trim());
+        if(ch && jp) {
+            const custom = JSON.parse(localStorage.getItem('jp_custom')) || [];
+            custom.push({ch, jp});
+            localStorage.setItem('jp_custom', JSON.stringify(custom));
+            wordBank.push({ch, jp});
+            alert("新增成功！");
+        }
+    }
+
+    function renderList() { document.getElementById('word-list').innerHTML = wordBank.map(w => `<div class='list-item'>${w.ch} : ${w.jp.join(', ')}</div>`).join(''); }
+    function renderReview() { document.getElementById('review-list').innerHTML = wrongWords.map(w => `<div class='list-item'>${w.ch} : ${w.jp.join(', ')}</div>`).join(''); }
+    function clearReview() { wrongWords = []; localStorage.setItem('jp_wrong', JSON.stringify(wrongWords)); renderReview(); }
+</script>
+</body>
+</html>
