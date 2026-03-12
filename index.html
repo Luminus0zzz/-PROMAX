@@ -2,7 +2,8 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>日文 N5 雲端題庫版</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>日文 N5 手寫大師</title>
     <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.0.0/dist/signature_pad.umd.min.js"></script>
     <style>
         body { font-family: sans-serif; background: #dfe6e9; margin: 0; display: flex; justify-content: center; }
@@ -10,82 +11,72 @@
         .page { display: none; flex-direction: column; gap: 15px; }
         .page.active { display: flex; }
         h1 { color: #6c5ce7; text-align: center; }
-        button { padding: 12px; border-radius: 8px; border: none; background: #6c5ce7; color: white; font-weight: bold; cursor: pointer; }
-        .canvas-wrapper { width: 100%; height: 250px; border: 2px solid #ddd; border-radius: 10px; touch-action: none; }
+        button { padding: 12px; border-radius: 8px; border: none; background: #6c5ce7; color: white; font-weight: bold; cursor: pointer; width: 100%; }
+        .back-btn { background: #b2bec3; }
+        .canvas-wrapper { width: 100%; height: 250px; border: 2px solid #6c5ce7; border-radius: 10px; touch-action: none; }
         canvas { width: 100%; height: 100%; display: block; }
-        .status-bar { font-size: 0.8rem; text-align: center; color: #95a5a6; margin-bottom: 10px; }
-        .list-item { padding: 5px; border-bottom: 1px solid #eee; font-size: 0.8rem; }
+        .list-item { padding: 8px; border-bottom: 1px solid #eee; font-size: 0.9rem; }
     </style>
 </head>
 <body>
 
 <div class="app">
     <div id="page-home" class="page active">
-        <h1>🇯🇵 N5 雲端學習</h1>
-        <div id="load-status" class="status-bar">正在同步雲端題庫...</div>
-        <button onclick="goTo('page-quiz')">開始測驗</button>
-        <button onclick="goTo('page-manage')">查看目前題庫</button>
-        <button onclick="goTo('page-review')">錯字回顧</button>
+        <h1>🇯🇵 日文手寫</h1>
+        <button onclick="goTo('page-quiz')">🎯 開始測驗</button>
+        <button onclick="goTo('page-manage')" style="background:#0984e3;">📚 管理單字</button>
+        <button onclick="goTo('page-review')" style="background:#d63031;">🚩 錯字回顧</button>
     </div>
 
     <div id="page-quiz" class="page">
-        <button onclick="goTo('page-home')">⬅️ 返回</button>
-        <div id="quiz-display" style="font-size: 2.2rem; text-align: center; color: #6c5ce7; font-weight: bold; padding: 10px;"></div>
+        <button class="back-btn" onclick="goTo('page-home')">⬅️ 返回</button>
+        <div id="quiz-display" style="font-size: 2.5rem; text-align: center; color: #6c5ce7; font-weight: bold;">讀取中...</div>
         <div class="canvas-wrapper"><canvas id="hwCanvas"></canvas></div>
-        <button style="background:#636e72; margin-top:10px;" onclick="sigPad.clear()">清除</button>
+        <button onclick="sigPad.clear()">清除畫布</button>
         <button id="check-btn" onclick="checkAnswer()">提交辨識</button>
         <button id="next-btn" style="background:#00b894; display:none;" onclick="nextQuestion()">下一題</button>
-        <div id="result" style="text-align: center; font-weight: bold; margin-top: 10px;"></div>
+        <div id="result" style="text-align: center; font-weight: bold; min-height: 1.5em; margin-top: 10px;"></div>
     </div>
 
     <div id="page-manage" class="page">
-        <button onclick="goTo('page-home')">⬅️ 返回</button>
-        <h3>目前載入的單字 (共 <span id="word-count">0</span> 字)</h3>
-        <div id="word-list" style="max-height: 400px; overflow-y: auto;"></div>
+        <button class="back-btn" onclick="goTo('page-home')">⬅️ 返回</button>
+        <input id="new-ch" placeholder="中文" style="padding:10px; width:90%;">
+        <input id="new-jp" placeholder="日文 (用逗號隔開)" style="padding:10px; width:90%;">
+        <button onclick="addWord()" style="background:#00b894;">新增單字</button>
+        <div id="word-list" style="max-height: 300px; overflow-y: auto; margin-top: 10px;"></div>
     </div>
 
     <div id="page-review" class="page">
-        <button onclick="goTo('page-home')">⬅️ 返回</button>
+        <button class="back-btn" onclick="goTo('page-home')">⬅️ 返回</button>
         <div id="review-list"></div>
+        <button onclick="clearReview()" style="background:#d63031;">清空紀錄</button>
     </div>
 </div>
 
 <script>
-    // 1. 設定遠端資料庫網址 (這是 Raw JSON 連結)
-    // 如果你想換成自己的，只需去 GitHub Gist 建立一個 JSON 檔並取其 Raw 連結
-    const REMOTE_DB_URL = 'https://gist.githubusercontent.com/Luminus0zzz/f52cdc0ce375264f0c0093bc794373fe/raw/3edc164e57607c89c7706904005f916b2209862e/words.json';
+    // 你的 Raw 連結 (確保這裡的網址完全正確)
+    const REMOTE_URL = 'https://gist.githubusercontent.com/Luminus0zzz/f52cdc0ce375264f0c0093bc794373fe/raw/3edc164e57607c89c7706904005f916b2209862e/words.json';
 
     let wordBank = [];
+    let wrongWords = JSON.parse(localStorage.getItem('jp_wrong')) || [];
     let remainingWords = [];
     let currentWord = {};
     let sigPad;
     const canvas = document.getElementById('hwCanvas');
 
-    // 2. 核心：非同步抓取遠端資料
-    async function syncDatabase() {
-        const statusEl = document.getElementById('load-status');
+    // 核心初始化：結合雲端與本地自訂
+    async function initApp() {
         try {
-            // 加上 t=${Date.now()} 防止瀏覽器讀取舊的暫存檔
-            const response = await fetch(`${REMOTE_DB_URL}?t=${Date.now()}`);
-            if (!response.ok) throw new Error('網路回應不完全');
-            
-            const data = await response.json();
-            wordBank = data;
-            
-            statusEl.innerText = `✅ 雲端同步成功：共 ${wordBank.length} 個單字`;
-            localStorage.setItem('cached_words', JSON.stringify(wordBank)); // 存一份備份到本地
-        } catch (error) {
-            console.error('雲端抓取失敗:', error);
-            statusEl.innerText = '⚠️ 雲端連接失敗，載入本地備份';
-            wordBank = JSON.parse(localStorage.getItem('cached_words')) || [{ch:"載入失敗", jp:["error"]}];
+            const res = await fetch(`${REMOTE_URL}?t=${Date.now()}`);
+            const data = await res.json();
+            const custom = JSON.parse(localStorage.getItem('jp_custom')) || [];
+            wordBank = [...data, ...custom];
+        } catch(e) {
+            wordBank = JSON.parse(localStorage.getItem('jp_custom')) || [{ch:"貓", jp:["猫","ねこ"]}];
         }
-        document.getElementById('word-count').innerText = wordBank.length;
     }
+    initApp();
 
-    // 初始化執行
-    syncDatabase();
-
-    // 3. 頁面與測驗邏輯
     function goTo(pageId) {
         document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
         document.getElementById(pageId).classList.add('active');
@@ -95,18 +86,22 @@
             nextQuestion(); 
         }
         if(pageId === 'page-manage') renderList();
+        if(pageId === 'page-review') renderReview();
     }
 
     function initPad() {
         const rect = canvas.getBoundingClientRect();
-        canvas.width = rect.width; canvas.height = rect.height;
+        canvas.width = rect.width; 
+        canvas.height = rect.height;
         sigPad = new SignaturePad(canvas, { minWidth: 2, maxWidth: 4 });
     }
 
     function nextQuestion() {
-        if (remainingWords.length === 0) { remainingWords = [...wordBank]; }
-        const idx = Math.floor(Math.random() * remainingWords.length);
-        currentWord = remainingWords.splice(idx, 1)[0];
+        if (remainingWords.length === 0) { 
+            alert("此輪結束，重新開始！"); 
+            remainingWords = [...wordBank]; 
+        }
+        currentWord = remainingWords.splice(Math.floor(Math.random() * remainingWords.length), 1)[0];
         document.getElementById('quiz-display').innerText = currentWord.ch;
         document.getElementById('result').innerText = "";
         document.getElementById('next-btn').style.display = "none";
@@ -114,11 +109,25 @@
         if(sigPad) sigPad.clear();
     }
 
+   // 錯字功能：嚴格檢查與寫入
+    function saveWrongWord(word) {
+        let currentWrongs = JSON.parse(localStorage.getItem('jp_wrong') || '[]');
+        // 檢查是否已存在，避免重複
+        if (!currentWrongs.some(w => w.ch === word.ch)) {
+            currentWrongs.push(word);
+            localStorage.setItem('jp_wrong', JSON.stringify(currentWrongs));
+            wrongWords = currentWrongs; // 同步記憶體中的變數
+        }
+    }
+
     async function checkAnswer() {
-        const traces = sigPad.toData().map(s => [s.points.map(p=>p.x), s.points.map(p=>p.y), []]);
+        if (sigPad.isEmpty()) return;
+        
+        // 準備辨識
+        const inkData = sigPad.toData().map(s => [s.points.map(p=>Math.round(p.x)), s.points.map(p=>Math.round(p.y)), []]);
         const res = await fetch('https://www.google.com.tw/inputtools/request?ime=handwriting&app=mobilesearch&cs=1&oe=UTF-8', {
             method: 'POST',
-            body: JSON.stringify({ "requests": [{ "writing_guide": { "writing_area_width": canvas.width, "writing_area_height": canvas.height }, "ink": traces, "language": "ja" }] }),
+            body: JSON.stringify({ "requests": [{ "writing_guide": { "writing_area_width": canvas.width, "writing_area_height": canvas.height }, "ink": inkData, "language": "ja" }] }),
             headers: { 'Content-Type': 'application/json' }
         });
         const result = await res.json();
@@ -131,13 +140,46 @@
             document.getElementById('check-btn').style.display = "none";
         } else {
             document.getElementById('result').style.color = "red";
-            document.getElementById('result').innerHTML = `❌ 錯誤！正確：${currentWord.jp.join(' 或 ')}`;
+            document.getElementById('result').innerHTML = `❌ 錯誤！正確：${currentWord.jp.join(' / ')}`;
+            // 呼叫這段來確保寫入
+            saveWrongWord(currentWord);
         }
     }
 
-    function renderList() {
-        document.getElementById('word-list').innerHTML = wordBank.map(w => `<div class='list-item'>${w.ch} : ${w.jp.join(', ')}</div>`).join('');
+    function renderReview() {
+        // 從 LocalStorage 重新讀取，確保顯示最新數據
+        wrongWords = JSON.parse(localStorage.getItem('jp_wrong') || '[]');
+        const listDiv = document.getElementById('review-list');
+        if (wrongWords.length === 0) {
+            listDiv.innerHTML = "<p>目前沒有錯字紀錄</p>";
+        } else {
+            listDiv.innerHTML = wrongWords.map(w => `<div class='list-item'>${w.ch} : ${w.jp.join(', ')}</div>`).join('');
+        }
     }
+
+    function clearReview() {
+        localStorage.removeItem('jp_wrong');
+        wrongWords = [];
+        renderReview();
+        alert("錯字紀錄已清除！");
+    }
+
+    function addWord() {
+        const ch = document.getElementById('new-ch').value;
+        const jp = document.getElementById('new-jp').value.split(',').map(s => s.trim());
+        if(ch && jp.length > 0) {
+            const custom = JSON.parse(localStorage.getItem('jp_custom')) || [];
+            custom.push({ch, jp});
+            localStorage.setItem('jp_custom', JSON.stringify(custom));
+            wordBank.push({ch, jp});
+            renderList();
+            alert("新增成功！");
+        }
+    }
+
+    function renderList() { document.getElementById('word-list').innerHTML = wordBank.map(w => `<div class='list-item'>${w.ch} : ${w.jp.join(', ')}</div>`).join(''); }
+    function renderReview() { document.getElementById('review-list').innerHTML = wrongWords.map(w => `<div class='list-item'>${w.ch} : ${w.jp.join(', ')}</div>`).join(''); }
+    function clearReview() { wrongWords = []; localStorage.setItem('jp_wrong', JSON.stringify(wrongWords)); renderReview(); }
 </script>
 </body>
 </html>
